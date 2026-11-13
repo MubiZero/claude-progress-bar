@@ -23,9 +23,10 @@ Answer `y` to add the marketplace, then pick a scope (user scope makes it work i
 - **Bars that follow a file by themselves.** `file` + `count` (a regex, e.g. `^## День`) counts the matching lines of a file a long job writes — an agent's report, a log — every 2 s: each new line moves the bar and becomes the step, with `total` it ends at that many. No calls and no tokens while it runs. Between two lines the bar moves on by the mean step so far, and a bar with nothing measured yet shows a block running along it, so live work never looks frozen.
 - **Bars for commands by themselves.** A background command gets a bar at once (its percent is read from output like `[ 45%]`, it ends on the command's exit); a `curl -o` / `wget -O` download gets size and speed from the server's Content-Length. A foreground command that runs longer than 15 s gets a bar too.
 - **Time left from past runs.** Durations are kept per kind of job (the last 5, across sessions), so a build that took 4 minutes last time shows “~4 мин” from its first second.
+- **Tidy.** One line per bar, the title cut to fit; a background command with nothing to measure (a server, a watcher loop) folds into one dim line «⋯ фоном: …» instead of a bar of its own; steps that move when the work says so are never flagged as silent.
 - **Stuck detection.** A download that has not grown for a minute turns red: “застряло 2 мин”; a command silent for 5 minutes says “тихо”.
 - **Notification at the end.** Work that took over 30 s raises a system notification (macOS: banner with a sound) — “✓ Готово: …” or “✗ Ошибка: …”.
-- **Buttons.** «Остановить» stops a background command, «Скрыть» drops a bar.
+- **Buttons.** «■» stops a background command, «×» drops a bar.
 - **The plan.** While Claude keeps a task list, a line on top shows “📋 Шаг 3 из 7 · <step>”.
 
 Labels are in Russian (МБ, осталось ~N мин); the code is small and easy to translate in `hooks/register.tsx`.

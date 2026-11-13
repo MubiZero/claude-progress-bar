@@ -99,7 +99,8 @@ function eta(j: Job, now: number): number | undefined {
 const bySize = (j: Job) => !!j.file && !j.count
 
 function stalledFor(j: Job, now: number): number {
-  if (j.doneAt) return 0
+  // Counted steps and Claude's own bars move when the work says so: an hour between days is no silence.
+  if (j.doneAt || j.count || j.kind === 'manual') return 0
   const since = now - (j.lastMoveAt ?? j.startedAt)
   const limit = bySize(j) ? FILE_STALL_MS : QUIET_MS
   return since > limit ? since : 0
@@ -128,8 +129,16 @@ function line(j: Job, now: number, width: number): string {
     parts.push(left !== undefined ? '~' + duration(left) : 'идёт ' + duration((now - j.startedAt) / 1000))
   }
   const mark = j.doneAt ? (j.failed ? '✗' : '✓') : '⏳'
-  return `${mark} ${j.title} ${bar} ${parts.join(' · ')}`
+  const tail = ` ${bar} ${parts.join(' · ')}`
+  return `${mark} ${clip(j.title, Math.max(12, width - tail.length - 10))}${tail}`
 }
+
+function clip(s: string, n: number): string {
+  return s.length <= n ? s : s.slice(0, Math.max(1, n - 1)) + '…'
+}
+
+/** A background command with nothing to measure (no percent, no file): a server, a loop. Folded into one line. */
+const quietBg = (j: Job) => j.kind === 'bg' && !j.doneAt && j.pct === undefined && !j.file
 
 // ---------- history of durations (across sessions) ----------
 
@@ -431,32 +440,39 @@ export const register: Register = on => {
     const now = await $.clock.now()
     const { Box, Text, Button } = $.ui.resolve(e)
     const width = e.viewport?.columns ?? 100
+    const bars = list.filter(j => !quietBg(j))
+    const folded = list.filter(quietBg)
     return (
       <Box flexDirection="column">
         {showPlan ? (
           <Text dimColor>{`📋 Шаг ${cur + 1} из ${steps.length} · ${steps[cur].content}`}</Text>
         ) : null}
-        {list.map(j => {
+        {bars.map(j => {
           const stuck = stalledFor(j, now) > 0 && bySize(j)
+          const main = line(j, now, width - 6)
+          const room = width - 6 - main.length - 2
           return (
             <Box key={j.id} flexDirection="row">
-              <Text color={j.failed || stuck ? 'red' : j.doneAt ? 'green' : undefined}>{line(j, now, width)}</Text>
-              {j.note && !j.doneAt ? <Text dimColor>{'  ' + j.note}</Text> : null}
-              <Text>{'  '}</Text>
+              <Text wrap="truncate" color={j.failed || stuck ? 'red' : j.doneAt ? 'green' : undefined}>{main}</Text>
+              {j.note && !j.doneAt && room > 8 ? <Text wrap="truncate" dimColor>{'  ' + clip(j.note, room)}</Text> : null}
+              <Text>{' '}</Text>
               {j.taskId && !j.doneAt ? (
                 <Button
                   key={'stop-' + j.id}
-                  label="Остановить"
+                  label="■"
                   onPress={async () => {
                     try { await $.tool.call({ tool: 'TaskStop', task_id: j.taskId }) } catch { /* already gone */ }
                     await finish($, j.id, true)
                   }}
                 />
               ) : null}
-              <Button key={'hide-' + j.id} label="Скрыть" onPress={() => update($, jobs, l => l.filter(x => x.id !== j.id))} />
+              <Button key={'hide-' + j.id} label="×" onPress={() => update($, jobs, l => l.filter(x => x.id !== j.id))} />
             </Box>
           )
         })}
+        {folded.length > 0 ? (
+          <Text wrap="truncate" dimColor>{clip(`⋯ фоном: ${folded.map(j => j.title).join(', ')}`, width)}</Text>
+        ) : null}
       </Box>
     )
   })

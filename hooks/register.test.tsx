@@ -52,14 +52,23 @@ test('a call without id is refused', async ($, on) => {
   expect(r.deny).toMatch(/id/)
 })
 
-test('a background command gets a bar with a stop button', async ($, on) => {
-  engine(on)
+test('a background command with a percent gets a bar with a stop button; one with nothing to measure folds into one line', async ($, on) => {
+  const ticks: (() => void)[] = []
+  engine(on, { tail: 'Compiling [ 45%]\n', ticks })
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100 } }))
   on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'abc' } }))
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
   await $.tool.call({ tool: 'Bash', command: 'make all', description: 'Собрать проект', run_in_background: true })
 
-  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
-  expect((await ui.find({ type: 'Text', text: /Собрать проект/ }))?.text).toMatch(/⏳/)
+  let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /фоном: Собрать проект/ }))).toBeDefined()
+  expect(await ui.find({ type: 'Button', key: 'stop-bg-abc' })).toBeUndefined()
+  await ui.unmount()
+
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /Собрать проект/ }))?.text).toMatch(/⏳.*45%/)
   expect(await ui.find({ type: 'Button', key: 'stop-bg-abc' })).toBeDefined()
   await ui.unmount()
 })
