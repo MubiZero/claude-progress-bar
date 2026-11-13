@@ -1,0 +1,5 @@
+{
+  "name": "progress-bar",
+  "owner": { "name": "MubiZero" },
+  "plugins": [{ "name": "progress-bar", "source": "./", "description": "Live progress bar above the prompt for long operations" }]
+}
