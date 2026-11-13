@@ -1,12 +1,14 @@
 export type Job = {
   id: string
   title: string
+  /** manual — Claude calls `progress`; cmd — a long foreground command; bg — a background command. */
+  kind: 'manual' | 'cmd' | 'bg'
   /** Growing file whose size is the progress (a download, a render). */
   file?: string
   /** Target: bytes when `file` is set, else any unit for `current`. */
   total?: number
   current?: number
-  /** Percent 0–100 when given directly. */
+  /** Percent 0–100 when given directly or read from a command's output. */
   pct?: number
   note?: string
   startedAt: number
@@ -14,11 +16,23 @@ export type Job = {
   rate?: number
   lastValue?: number
   lastAt?: number
+  /** Last time the file or the output grew, or Claude sent an update. */
+  lastMoveAt?: number
   doneAt?: number
+  failed?: boolean
+  /** Background task id and its output file. */
+  taskId?: string
+  outFile?: string
+  /** Key of past durations kept across sessions, and their mean. */
+  histKey?: string
+  expectMs?: number
+  notified?: boolean
 }
+
+export type PlanStep = { content: string; status: 'pending' | 'in_progress' | 'completed' }
 
 declare module 'claude-code' {
   interface PluginState {
-    'progress-bar': { jobs: Job[] }
+    'progress-bar': { jobs: Job[]; plan: PlanStep[] }
   }
 }
