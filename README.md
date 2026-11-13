@@ -20,7 +20,7 @@ Answer `y` to add the marketplace, then pick a scope (user scope makes it work i
 ## What it does
 
 - **Bars for what Claude asks for.** Claude calls `progress` with an `id`, a `title` and either `file` + `total` (a download or any growing file — size, speed and time left are measured every 2 s) or `pct` / `current`+`total` with a `note` for the step.
-- **Bars that follow a file by themselves.** `file` + `count` (a regex, e.g. `^## День`) counts the matching lines of a file a long job writes — an agent's report, a log — every 2 s: each new line moves the bar and becomes the step, with `total` it ends at that many. No calls and no tokens while it runs.
+- **Bars that follow a file by themselves.** `file` + `count` (a regex, e.g. `^## День`) counts the matching lines of a file a long job writes — an agent's report, a log — every 2 s: each new line moves the bar and becomes the step, with `total` it ends at that many. No calls and no tokens while it runs. Between two lines the bar moves on by the mean step so far, and a bar with nothing measured yet shows a block running along it, so live work never looks frozen.
 - **Bars for commands by themselves.** A background command gets a bar at once (its percent is read from output like `[ 45%]`, it ends on the command's exit); a `curl -o` / `wget -O` download gets size and speed from the server's Content-Length. A foreground command that runs longer than 15 s gets a bar too.
 - **Time left from past runs.** Durations are kept per kind of job (the last 5, across sessions), so a build that took 4 minutes last time shows “~4 мин” from its first second.
 - **Stuck detection.** A download that has not grown for a minute turns red: “застряло 2 мин”; a command silent for 5 minutes says “тихо”.

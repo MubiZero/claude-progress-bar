@@ -73,6 +73,12 @@ function duration(s: number): string {
 /** Share done, 0–1, or undefined when unknown. `guess` — taken from past runs, not measured. */
 function fraction(j: Job, now: number): { f?: number; guess: boolean } {
   if (j.doneAt) return { f: 1, guess: false }
+  // Counted steps: between two of them the bar moves on by the mean step so far, never past the next one.
+  if (j.count && j.total && j.current !== undefined && j.current > 0 && j.stepAt) {
+    const mean = (j.stepAt - j.startedAt) / j.current
+    const part = mean > 0 ? Math.min(0.9, (now - j.stepAt) / mean) : 0
+    return { f: Math.max(0, Math.min(0.99, (j.current + part) / j.total)), guess: false }
+  }
   if (j.total && j.current !== undefined) return { f: Math.max(0, Math.min(1, j.current / j.total)), guess: false }
   if (j.pct !== undefined) return { f: Math.max(0, Math.min(1, j.pct / 100)), guess: false }
   if (j.expectMs) return { f: Math.min(0.95, (now - j.startedAt) / j.expectMs), guess: true }
@@ -103,13 +109,16 @@ function line(j: Job, now: number, width: number): string {
   const { f } = fraction(j, now)
   const cells = width < 60 ? 8 : 12
   const fill = f === undefined ? 0 : Math.round(f * cells)
-  const bar = '▰'.repeat(fill) + '▱'.repeat(cells - fill)
+  // Nothing measured yet: a block runs along the bar, so live work never looks frozen.
+  const idle = !j.doneAt && fill === 0
+  const at = Math.floor(now / 1000) % cells
+  const bar = idle ? [...Array(cells)].map((_, i) => (i === at ? '▰' : '▱')).join('') : '▰'.repeat(fill) + '▱'.repeat(cells - fill)
   const parts: string[] = []
   if (j.doneAt) {
     parts.push((j.failed ? 'ошибка через ' : 'готово за ') + duration((j.doneAt - j.startedAt) / 1000))
   } else {
     const { f: g, guess } = fraction(j, now)
-    if (g !== undefined && !guess) parts.push(Math.floor(g * 100) + '%')
+    if (g !== undefined && !guess && g > 0) parts.push(Math.floor(g * 100) + '%')
     if (bySize(j) && j.current !== undefined) parts.push(j.total ? size2(j.current, j.total) : bytes(j.current))
     else if (j.total && j.current !== undefined) parts.push(j.current + '/' + j.total)
     if (bySize(j) && j.rate && j.rate > 0) parts.push(bytes(j.rate) + '/с')
@@ -253,7 +262,7 @@ export const register: Register = on => {
             const n = hits.length
             const moved = j.lastValue === undefined || n !== j.lastValue
             const step = hits[n - 1]?.replace(/^[#\s*>-]+/, '').trim().slice(0, 60)
-            j = { ...j, current: n, lastValue: n, lastAt: now, lastMoveAt: moved ? now : j.lastMoveAt, note: step || j.note }
+            j = { ...j, current: n, lastValue: n, lastAt: now, lastMoveAt: moved ? now : j.lastMoveAt, stepAt: moved && n > 0 ? now : j.stepAt, note: step || j.note }
             if (j.total !== undefined && n >= j.total) ended.push({ id: j.id, failed: false })
           } catch { /* no file yet, or no match: grep says so with a non-zero exit */ }
         } else if (j.file) {

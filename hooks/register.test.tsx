@@ -117,3 +117,30 @@ test('done for a bar that is gone draws nothing new', async ($, on) => {
   expect(await ui.find({ type: 'Text', text: /gone/ })).toBeUndefined()
   await ui.unmount()
 })
+
+test('a bar with nothing measured yet still moves: a block runs along it', async ($, on) => {
+  let now = 1_000_000
+  engine(on, { now: () => now })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const a = String((await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'w', title: 'Ждём' })).result)
+  now += 3000
+  const b = String((await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'w', note: 'ещё' })).result)
+  expect(a).toMatch(/▰/)
+  expect(a).not.toBe(b)
+  expect(a).not.toMatch(/0%/)
+})
+
+test('count: between two steps the bar moves on by the mean step', async ($, on) => {
+  let now = 1_000_000
+  const ticks: (() => void)[] = []
+  engine(on, { now: () => now, tail: '## День 1\n', ticks })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'c', title: 'Дни', file: '/tmp/r.md', count: '^## День', total: 4 })
+  now += 60_000
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  now += 30_000   // half of the first day's minute later
+  const r = String((await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'c', note: 'день 2' })).result)
+  expect(r).toMatch(/1\/4/)
+  expect(r).toMatch(/3[0-9]%/)   // (1 + 0.5) / 4 = 37 %
+})

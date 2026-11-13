@@ -7,6 +7,8 @@ export type Job = {
   file?: string
   /** With `file`: a regex; progress is the count of matching lines in it (an agent's report, a log), the last is the note. */
   count?: string
+  /** When the counted lines last grew (the step the bar moves on from). */
+  stepAt?: number
   /** Target: bytes when `file` is set, else any unit for `current`. */
   total?: number
   current?: number
