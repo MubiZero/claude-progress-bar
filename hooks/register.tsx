@@ -71,21 +71,17 @@ function eta(j: Job, now: number): number | undefined {
 
 function line(j: Job, now: number, width: number): string {
   const f = fraction(j)
-  const cells = Math.max(10, Math.min(30, width - 50))
-  const bar = f === undefined
-    ? '░'.repeat(cells)
-    : '█'.repeat(Math.round(f * cells)) + '░'.repeat(cells - Math.round(f * cells))
+  const cells = width < 60 ? 8 : 12
+  const fill = f === undefined ? 0 : Math.round(f * cells)
+  const bar = '▰'.repeat(fill) + '▱'.repeat(cells - fill)
   const parts: string[] = []
-  if (f !== undefined) parts.push(Math.floor(f * 100) + '%')
-  if (j.file && j.current !== undefined) parts.push(bytes(j.current) + (j.total ? ' из ' + bytes(j.total) : ''))
-  else if (j.total && j.current !== undefined) parts.push(j.current + ' из ' + j.total)
-  if (j.file && j.rate && !j.doneAt) parts.push(bytes(j.rate) + '/с')
-  if (j.doneAt) parts.push('готово за ' + duration((j.doneAt - j.startedAt) / 1000))
+  if (f !== undefined && !j.doneAt) parts.push(Math.floor(f * 100) + '%')
+  if (j.doneAt) parts.push('готово')
   else {
     const left = eta(j, now)
-    parts.push(left !== undefined ? 'осталось ~' + duration(left) : 'идёт ' + duration((now - j.startedAt) / 1000))
+    parts.push(left !== undefined ? '~' + duration(left) : duration((now - j.startedAt) / 1000))
   }
-  return `${j.doneAt ? '✓' : '⏳'} ${j.title}  ${bar}  ${parts.join(' · ')}`
+  return `${j.doneAt ? '✓' : '⏳'} ${j.title} ${bar} ${parts.join(' · ')}`
 }
 
 export const register: Register = on => {
