@@ -107,3 +107,13 @@ test('count: the bar counts the matching lines of a file by itself and shows the
   expect((await ui.find({ type: 'Text', text: /День 2 \(склад с нуля\)/ }))).toBeDefined()
   await ui.unmount()
 })
+
+test('done for a bar that is gone draws nothing new', async ($, on) => {
+  engine(on)
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const r = await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'gone', done: true })
+  expect(String(r.result)).toBe('already finished')
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect(await ui.find({ type: 'Text', text: /gone/ })).toBeUndefined()
+  await ui.unmount()
+})

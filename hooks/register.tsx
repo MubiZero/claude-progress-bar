@@ -307,6 +307,8 @@ export const register: Register = on => {
     // the same file is already tracked from a download command: take that bar over
     const twin = input.file ? list.find(j => j.file === input.file && j.id !== input.id && !j.doneAt) : undefined
     const old = list.find(j => j.id === input.id) ?? twin
+    // «done» for a bar that already ended by itself (a `count` bar at its total) and left: nothing to draw again.
+    if (!old && (input.done || input.failed) && input.title === undefined) return { result: 'already finished' }
     const title = input.title ?? old?.title ?? input.id
     const histKey = old?.histKey ?? histKeyOf(title)
     const base: Job = old ?? { id: input.id, title, kind: 'manual', startedAt: now, histKey, expectMs: await expectFor($, histKey) }
