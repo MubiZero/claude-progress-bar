@@ -1,10 +1,10 @@
 # progress-bar — a live progress bar for Claude Code
 
-When Claude downloads a big file, builds an app or renders something for minutes, it can look like it is just sitting there. This mod gives Claude a `progress` tool and draws a live bar above the prompt (and in the status line) so you always see what is running, how far it got and roughly how long is left — in one short line.
+When Claude downloads a big file, builds an app or renders something for minutes, it can look like it is just sitting there. This mod gives Claude a `progress` tool and draws a live bar above the prompt so you always see what is running, how far it got and roughly how long is left — in one short line.
 
 ```
-⏳ Модель Vosk-TTS ▰▰▰▰▰▰▰▰▱▱▱▱ 72% · ~12 мин
-✓ Сборка APK ▰▰▰▰▰▰▰▰▰▰▰▰ готово
+⏳ Модель Vosk-TTS ▰▰▰▰▰▰▰▰▱▱▱▱ 72% · 563/783 МБ · 310 КБ/с · ~12 мин
+✓ Сборка APK ▰▰▰▰▰▰▰▰▰▰▰▰ готово за 2 мин
 ```
 
 ## Install

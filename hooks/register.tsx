@@ -52,6 +52,13 @@ function bytes(n: number): string {
   return n + ' Б'
 }
 
+/** «556/783 МБ»: одна единица на пару. */
+function size2(cur: number, total: number): string {
+  const [d, u] = total >= 1e9 ? [1e9, 'ГБ'] : total >= 1e6 ? [1e6, 'МБ'] : [1e3, 'КБ']
+  const fmt = (n: number) => (n / d >= 100 || d === 1e3 ? String(Math.round(n / d)) : (n / d).toFixed(1))
+  return fmt(cur) + '/' + fmt(total) + ' ' + u
+}
+
 function duration(s: number): string {
   if (!isFinite(s) || s < 0) return '…'
   if (s < 60) return Math.max(1, Math.round(s)) + ' с'
@@ -76,7 +83,10 @@ function line(j: Job, now: number, width: number): string {
   const bar = '▰'.repeat(fill) + '▱'.repeat(cells - fill)
   const parts: string[] = []
   if (f !== undefined && !j.doneAt) parts.push(Math.floor(f * 100) + '%')
-  if (j.doneAt) parts.push('готово')
+  if (j.file && j.current !== undefined && !j.doneAt) parts.push(j.total ? size2(j.current, j.total) : bytes(j.current))
+  else if (!j.file && j.total && j.current !== undefined && !j.doneAt) parts.push(j.current + '/' + j.total)
+  if (j.file && j.rate && j.rate > 0 && !j.doneAt) parts.push(bytes(j.rate) + '/с')
+  if (j.doneAt) parts.push('готово за ' + duration((j.doneAt - j.startedAt) / 1000))
   else {
     const left = eta(j, now)
     parts.push(left !== undefined ? '~' + duration(left) : duration((now - j.startedAt) / 1000))
@@ -87,6 +97,7 @@ function line(j: Job, now: number, width: number): string {
 export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     await $.tool.register({ name: 'progress', description: DESCRIPTION, inputSchema: SCHEMA, isDeferred: false })
+    $.ui.status(undefined)   // строки внизу больше нет: стираем ту, что оставила версия 0.1.0
 
     // Each tick: grow file-backed bars, close finished ones, drop old finished ones.
     $.clock.every(TICK_MS, async () => {
@@ -109,8 +120,6 @@ export const register: Register = on => {
         updated.push({ ...j, current: size, rate, lastValue: size, lastAt: now, doneAt: finished ? now : undefined })
       }
       await update($, jobs, () => updated)
-      const live = updated.filter(j => !j.doneAt)
-      $.ui.status(live.length ? line(live[0], now, 60) : undefined)
     })
 
     return next(e)
@@ -141,7 +150,6 @@ export const register: Register = on => {
       if (input.current !== undefined) { j.lastValue = input.current; j.lastAt = now }
       return [...list.filter(x => x.id !== input.id), j]
     })
-    if (input.done || input.remove) $.ui.status(undefined)
     const list = await read($, jobs)
     const j = list.find(x => x.id === input.id)
     return { result: j ? line(j, now, 60) : 'removed' }
