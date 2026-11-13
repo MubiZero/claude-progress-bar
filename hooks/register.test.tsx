@@ -7,10 +7,11 @@ const BAND = {
 } as const
 
 // Everything beneath the plugin that the mod calls on the engine.
-function engine(on: any, opts: { now?: () => number; store?: Map<string, unknown>; tail?: string } = {}) {
+function engine(on: any, opts: { now?: () => number; store?: Map<string, unknown>; tail?: string; ticks?: (() => void)[] } = {}) {
   const store = opts.store ?? new Map<string, unknown>()
   on('tool.register', () => ({ value: { tool: 'mcp__progress-bar__progress' } }))
-  on('clock.every', () => ({ value: {} }))
+  // With `ticks`, each period waits for the test to release it (one call = one tick of the mod).
+  on('clock.every', () => (opts.ticks ? new Promise(r => opts.ticks!.push(() => r({ value: {} }))) : { value: {} }))
   on('clock.after', () => ({ value: {} }))
   on('clock.now', () => ({ value: opts.now ? opts.now() : 1_000_000 }))
   on('ui.status', () => ({ value: undefined }))
@@ -90,5 +91,19 @@ test('the task list shows the current step', async ($, on) => {
 
   const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /Шаг/ }))?.text).toBe('📋 Шаг 2 из 3 · Собрать')
+  await ui.unmount()
+})
+
+test('count: the bar counts the matching lines of a file by itself and shows the last as the step', async ($, on) => {
+  const ticks: (() => void)[] = []
+  engine(on, { tail: '## День 1 (смена)\n## День 2 (склад с нуля)\n', ticks })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'sim', title: 'Симуляция', file: '/tmp/report.md', count: '^## День', total: 7 })
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /Симуляция/ }))?.text).toMatch(/2\/7/)
+  expect((await ui.find({ type: 'Text', text: /День 2 \(склад с нуля\)/ }))).toBeDefined()
   await ui.unmount()
 })

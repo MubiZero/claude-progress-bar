@@ -4,7 +4,7 @@ import type { EngineInterface, Register } from 'claude-code'
 import type { Job, PlanStep } from '../types'
 
 // Change a tag when the stored fields change: it declines what an earlier version stored.
-const jobs = atom({ plugin: 'progress-bar', key: 'jobs' } as const, [] as Job[], { shape: 'jobs-2' })
+const jobs = atom({ plugin: 'progress-bar', key: 'jobs' } as const, [] as Job[], { shape: 'jobs-3' })
 const plan = atom({ plugin: 'progress-bar', key: 'plan' } as const, [] as PlanStep[], { shape: 'plan-1' })
 
 const TICK_MS = 2000
@@ -18,7 +18,8 @@ const DESCRIPTION = [
   'Shows the person a live progress bar above the prompt for a long operation, so a wait never looks like idling.',
   'Long commands you run are tracked by themselves (elapsed time, a percent read from their output, time left from past runs), so call this tool for what that cannot see:',
   'a download or any growing file — pass `file` (absolute path) and `total` (expected bytes) and the bar updates itself with speed and time left;',
-  'or a multi-step job — pass `pct` (0–100) or `current`/`total` and call again with the same `id` as it moves; add `note` for the current step.',
+  'or a multi-step job — pass `pct` (0–100) or `current`/`total` and call again with the same `id` as it moves; add `note` for the current step;',
+  'or work that writes as it goes (an agent\'s report, a log) — pass `file` and `count` (a regex): the bar counts the matching lines by itself, moves on each new one and shows the last as the step, so nobody has to call again (with `total`, it ends at that many).',
   'Use a short title in the person\'s language. Call with `done: true` when it finishes, `failed: true` when it fails, or `remove: true` to drop it.',
 ].join(' ')
 
@@ -27,7 +28,8 @@ const SCHEMA = {
   properties: {
     id: { type: 'string', description: 'Stable id of this operation, e.g. "model-download".' },
     title: { type: 'string', description: 'Short label shown in the bar.' },
-    file: { type: 'string', description: 'Absolute path of a file whose size grows (download, render).' },
+    file: { type: 'string', description: 'Absolute path of a file whose size grows (download, render), or that `count` reads.' },
+    count: { type: 'string', description: 'With `file`: a regex; progress is the number of matching lines (e.g. "^## День" in a report a long job writes), the last match is the step.' },
     total: { type: 'number', description: 'Expected final size in bytes (with file), or total units (with current).' },
     current: { type: 'number', description: 'Units done so far (without file).' },
     pct: { type: 'number', description: 'Percent done, 0–100.' },
@@ -40,7 +42,7 @@ const SCHEMA = {
 }
 
 type Input = {
-  id: string; title?: string; file?: string; total?: number; current?: number
+  id: string; title?: string; file?: string; count?: string; total?: number; current?: number
   pct?: number; note?: string; done?: boolean; failed?: boolean; remove?: boolean
 }
 
@@ -87,10 +89,13 @@ function eta(j: Job, now: number): number | undefined {
   return undefined
 }
 
+/** A file whose size is the progress (a download), not one whose lines are counted. */
+const bySize = (j: Job) => !!j.file && !j.count
+
 function stalledFor(j: Job, now: number): number {
   if (j.doneAt) return 0
   const since = now - (j.lastMoveAt ?? j.startedAt)
-  const limit = j.file ? FILE_STALL_MS : QUIET_MS
+  const limit = bySize(j) ? FILE_STALL_MS : QUIET_MS
   return since > limit ? since : 0
 }
 
@@ -105,11 +110,11 @@ function line(j: Job, now: number, width: number): string {
   } else {
     const { f: g, guess } = fraction(j, now)
     if (g !== undefined && !guess) parts.push(Math.floor(g * 100) + '%')
-    if (j.file && j.current !== undefined) parts.push(j.total ? size2(j.current, j.total) : bytes(j.current))
+    if (bySize(j) && j.current !== undefined) parts.push(j.total ? size2(j.current, j.total) : bytes(j.current))
     else if (j.total && j.current !== undefined) parts.push(j.current + '/' + j.total)
-    if (j.file && j.rate && j.rate > 0) parts.push(bytes(j.rate) + '/с')
+    if (bySize(j) && j.rate && j.rate > 0) parts.push(bytes(j.rate) + '/с')
     const stall = stalledFor(j, now)
-    if (stall) parts.push((j.file ? 'застряло ' : 'тихо ') + duration(stall / 1000))
+    if (stall) parts.push((bySize(j) ? 'застряло ' : 'тихо ') + duration(stall / 1000))
     const left = eta(j, now)
     parts.push(left !== undefined ? '~' + duration(left) : 'идёт ' + duration((now - j.startedAt) / 1000))
   }
@@ -240,7 +245,18 @@ export const register: Register = on => {
       for (const j0 of list) {
         let j = j0
         if (j.doneAt) { if (now - j.doneAt < KEEP_DONE_MS) kept.push(j); continue }
-        if (j.file) {
+        if (j.file && j.count) {
+          // Lines that match: each new one moves the bar, the last one is the step («## День 6 (разбор хвоста)»).
+          try {
+            const r = await $.process.run(['grep', '-E', '--', j.count, j.file])
+            const hits = r.stdout.split('\n').filter(x => x.trim() !== '')
+            const n = hits.length
+            const moved = j.lastValue === undefined || n !== j.lastValue
+            const step = hits[n - 1]?.replace(/^[#\s*>-]+/, '').trim().slice(0, 60)
+            j = { ...j, current: n, lastValue: n, lastAt: now, lastMoveAt: moved ? now : j.lastMoveAt, note: step || j.note }
+            if (j.total !== undefined && n >= j.total) ended.push({ id: j.id, failed: false })
+          } catch { /* no file yet, or no match: grep says so with a non-zero exit */ }
+        } else if (j.file) {
           let size: number | undefined
           try { const st = await $.fs.stat(j.file); if (st.kind === 'file') size = st.size } catch { size = undefined }
           if (size !== undefined) {
@@ -298,6 +314,7 @@ export const register: Register = on => {
       ...base,
       title,
       file: input.file ?? base.file,
+      count: input.count ?? base.count,
       total: input.total ?? base.total,
       current: input.current ?? base.current,
       pct: input.pct ?? base.pct,
@@ -409,7 +426,7 @@ export const register: Register = on => {
           <Text dimColor>{`📋 Шаг ${cur + 1} из ${steps.length} · ${steps[cur].content}`}</Text>
         ) : null}
         {list.map(j => {
-          const stuck = stalledFor(j, now) > 0 && !!j.file
+          const stuck = stalledFor(j, now) > 0 && bySize(j)
           return (
             <Box key={j.id} flexDirection="row">
               <Text color={j.failed || stuck ? 'red' : j.doneAt ? 'green' : undefined}>{line(j, now, width)}</Text>

@@ -5,6 +5,8 @@ export type Job = {
   kind: 'manual' | 'cmd' | 'bg'
   /** Growing file whose size is the progress (a download, a render). */
   file?: string
+  /** With `file`: a regex; progress is the count of matching lines in it (an agent's report, a log), the last is the note. */
+  count?: string
   /** Target: bytes when `file` is set, else any unit for `current`. */
   total?: number
   current?: number
