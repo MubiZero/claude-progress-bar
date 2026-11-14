@@ -25,12 +25,20 @@ function engine(on: any, opts: { now?: () => number; store?: Map<string, unknown
   return store
 }
 
+// The text of the bar row that mentions `title`, as drawn above the prompt.
+async function barOf($: any, title: RegExp) {
+  const ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  const row = await ui.find({ type: 'Text', text: title })
+  await ui.unmount()
+  return String(row?.text)
+}
+
 test('a progress call draws a bar above the prompt, on every surface', async ($, on) => {
   engine(on)
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
 
   const r = await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'b', title: 'Сборка', pct: 40, note: 'компиляция' })
-  expect(String(r.result)).toMatch(/Сборка.*40%/)
+  expect(r.result).toBe('ok')
 
   for (const surface of ['terminal', 'desktop', 'vscode', 'mobile'] as const) {
     const ui = await $.ui.mount({ ...BAND, surface })
@@ -141,8 +149,8 @@ test('a finished job is remembered and the next one shows time left from the sta
 
   await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'y', title: 'Рендер' })
   now += 30_000
-  const r = await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'y', note: 'кадры' })
-  expect(String(r.result)).toMatch(/~2 мин|~90 с|~1 мин/)
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'y', note: 'кадры' })
+  expect(await barOf($, /Рендер.*~/)).toMatch(/~2 мин|~90 с|~1 мин/)
 })
 
 test('the task list shows the current step', async ($, on) => {
@@ -187,9 +195,11 @@ test('a bar with nothing measured yet still moves: a block runs along it', async
   let now = 1_000_000
   engine(on, { now: () => now })
   await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
-  const a = String((await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'w', title: 'Ждём' })).result)
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'w', title: 'Ждём' })
+  const a = await barOf($, /Ждём/)
   now += 3000
-  const b = String((await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'w', note: 'ещё' })).result)
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'w', note: 'ещё' })
+  const b = await barOf($, /Ждём/)
   expect(a).toMatch(/▰/)
   expect(a).not.toBe(b)
   expect(a).not.toMatch(/0%/)
@@ -205,7 +215,8 @@ test('count: between two steps the bar moves on by the mean step', async ($, on)
   ticks.shift()?.()
   await new Promise(r => setTimeout(r, 20))
   now += 30_000   // half of the first day's minute later
-  const r = String((await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'c', note: 'день 2' })).result)
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'c', note: 'день 2' })
+  const r = await barOf($, /Дни/)
   expect(r).toMatch(/1\/4/)
   expect(r).toMatch(/3[0-9]%/)   // (1 + 0.5) / 4 = 37 %
 })

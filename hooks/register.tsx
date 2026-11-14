@@ -402,8 +402,8 @@ export const register: Register = on => {
     if (input.current !== undefined) { j.lastValue = input.current; j.lastAt = now }
     await put($, j)
     if (input.done || input.failed) await finish($, j.id, !!input.failed)
-    const after = (await read($, jobs)).find(x => x.id === j.id)
-    return { result: after ? line(after, now, 60) : 'removed' }
+    // The bar above the prompt already shows the line; the call's own result stays short so it is not drawn twice.
+    return { result: 'ok' }
   }).catch(($, e, next) => ({ deny: `${$.plugin.name}: the progress bar failed to update` }))
 
   // ----- commands Claude runs: long foreground ones and background ones -----
