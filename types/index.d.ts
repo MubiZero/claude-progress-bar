@@ -31,6 +31,8 @@ export type Job = {
   histKey?: string
   expectMs?: number
   notified?: boolean
+  /** When a long-running job last got a "still going" notification, so it repeats at an interval, not every tick. */
+  lastPingAt?: number
 }
 
 export type PlanStep = { content: string; status: 'pending' | 'in_progress' | 'completed' }

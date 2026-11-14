@@ -13,6 +13,8 @@ const CMD_SHOW_AFTER_MS = 15_000     // a foreground command gets a bar once it 
 const NOTIFY_MIN_MS = 30_000         // notify only about work that took at least this long
 const FILE_STALL_MS = 60_000         // a download that has not grown this long is stuck
 const QUIET_MS = 5 * 60_000          // a command or manual bar with no news this long is flagged
+const PING_AFTER_MS = 5 * 60_000     // a job running this long starts getting progress pings...
+const PING_EVERY_MS = 10 * 60_000    // ...repeated at this interval, so a walk-away build still reports in
 
 const DESCRIPTION = [
   'Shows the person a live progress bar above the prompt for a long operation, so a wait never looks like idling.',
@@ -161,24 +163,58 @@ async function remember($: EngineInterface, key: string | undefined, ms: number)
 
 // ---------- notification when long work ends ----------
 
-async function announce($: EngineInterface, j: Job) {
-  if (!j.doneAt || j.notified || j.doneAt - j.startedAt < NOTIFY_MIN_MS) return
-  const text = `${j.failed ? '✗ Ошибка' : '✓ Готово'}: ${j.title} (${duration((j.doneAt - j.startedAt) / 1000)})`
+async function notifyOS($: EngineInterface, text: string, sound: string) {
   let sent = false
   try { sent = (await $.ui.notify(text, { title: 'Claude' })).isSent } catch { sent = false }
   if (!sent) {
     const esc = text.replace(/\\/g, '\\\\').replace(/"/g, '\\"')
     try {
-      await $.process.run(['osascript', '-e', `display notification "${esc}" with title "Claude" sound name "${j.failed ? 'Basso' : 'Glass'}"`])
+      await $.process.run(['osascript', '-e', `display notification "${esc}" with title "Claude" sound name "${sound}"`])
     } catch { /* not macOS: the toast below is all there is */ }
   }
   $.ui.toast(text)
 }
 
+async function announce($: EngineInterface, j: Job) {
+  if (!j.doneAt || j.notified || j.doneAt - j.startedAt < NOTIFY_MIN_MS) return
+  const text = `${j.failed ? '✗ Ошибка' : '✓ Готово'}: ${j.title} (${duration((j.doneAt - j.startedAt) / 1000)})`
+  await notifyOS($, text, j.failed ? 'Basso' : 'Glass')
+}
+
+/** A heartbeat for a job long enough that the person may have walked away: same text as the live bar, so
+ *  it says the one thing a one-shot "still running" ping never does — how far along and how long is left. */
+async function pingIfDue($: EngineInterface, j: Job, now: number): Promise<number | undefined> {
+  if (j.doneAt) return undefined
+  // First ping once the job clears the floor since it started; later ones spaced from the last ping, not
+  // from the start — else a job already past the floor would owe a full interval before its first ping.
+  const dueAfter = j.lastPingAt === undefined ? PING_AFTER_MS : PING_EVERY_MS
+  const since = j.lastPingAt ?? j.startedAt
+  if (now - since < dueAfter) return undefined
+  if (stalledFor(j, now)) return undefined // the stall itself already shows in the bar; don't also ping on it
+  await notifyOS($, 'Ещё идёт: ' + line(j, now, 999), 'Pop')
+  return now
+}
+
 // ---------- reading a background command's output ----------
 
 const EXIT_RE = /\[exited with code (\d+)\]/
-const PCT_RES = [/\[\s*(\d{1,3})%\]/g, /(?:^|\s)(\d{1,3}(?:\.\d)?)%\s*$/gm]
+// Direct percent: Claude's own bracket convention, a bare trailing NN%, and the known tools that print
+// "label: NN%" without brackets — git's own transfer counters (also the "remote: " form on the server side)
+// and apt's dpkg progress. Not a generic "NN%" scan: that false-fires on percentages quoted in unrelated text.
+const PCT_RES = [
+  /\[\s*(\d{1,3})%\]/g,
+  /(?:^|\s)(\d{1,3}(?:\.\d)?)%\s*$/gm,
+  /\b(?:remote: )?(?:Receiving objects|Resolving deltas|Compressing objects|Counting objects|Writing objects|Enumerating objects):\s*(\d{1,3})%/g,
+  /^Progress:\s*\[.{0,80}?\]\s*(\d{1,3})%/gm, // dpkg/apt
+]
+// Fraction counters with no percent at all: docker's classic builder and buildkit's step line, and any
+// "x of y" / "x/y" a build tool prints for its own step count. Used only when no direct percent matched —
+// a bare "(3/8)" elsewhere in noisy output is too easy to misread as something it isn't.
+const STEP_RES = [
+  /\bStep\s+(\d+)\/(\d+)\s*:/gi, // docker classic builder: "Step 3/8 : RUN ..."
+  /^#\d+\s+\[.*?\s+(\d+)\/(\d+)\]/gm, // buildkit: "#5 [stage-1 3/8] RUN ..."
+  /\btask\s+(\d+)\s+of\s+(\d+)\b/gi,
+]
 
 function pctFrom(tail: string): number | undefined {
   let best: { at: number; v: number } | undefined
@@ -188,7 +224,19 @@ function pctFrom(tail: string): number | undefined {
       if (v >= 0 && v <= 100 && (!best || (m.index ?? 0) >= best.at)) best = { at: m.index ?? 0, v }
     }
   }
-  return best?.v
+  if (best) return best.v
+  let bestStep: { at: number; v: number } | undefined
+  for (const re of STEP_RES) {
+    for (const m of tail.matchAll(re)) {
+      const done = parseInt(m[1], 10), total = parseInt(m[2], 10)
+      if (total > 0 && done >= 0 && done <= total) {
+        const at = m.index ?? 0
+        const v = Math.round((done / total) * 100)
+        if (!bestStep || at >= bestStep.at) bestStep = { at, v }
+      }
+    }
+  }
+  return bestStep?.v
 }
 
 async function findOutput($: EngineInterface, taskId: string): Promise<string | undefined> {
@@ -307,6 +355,12 @@ export const register: Register = on => {
       }
       await update($, jobs, () => kept)
       for (const x of ended) await finish($, x.id, x.failed)
+      const endedIds = new Set(ended.map(x => x.id))
+      for (const j of kept) {
+        if (endedIds.has(j.id)) continue
+        const pinged = await pingIfDue($, j, now)
+        if (pinged !== undefined) await update($, jobs, list => list.map(x => (x.id === j.id ? { ...x, lastPingAt: pinged } : x)))
+      }
     })
 
     return next(e)

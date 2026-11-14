@@ -7,7 +7,7 @@ const BAND = {
 } as const
 
 // Everything beneath the plugin that the mod calls on the engine.
-function engine(on: any, opts: { now?: () => number; store?: Map<string, unknown>; tail?: string; ticks?: (() => void)[] } = {}) {
+function engine(on: any, opts: { now?: () => number; store?: Map<string, unknown>; tail?: string; ticks?: (() => void)[]; notifies?: string[] } = {}) {
   const store = opts.store ?? new Map<string, unknown>()
   on('tool.register', () => ({ value: { tool: 'mcp__progress-bar__progress' } }))
   // With `ticks`, each period waits for the test to release it (one call = one tick of the mod).
@@ -16,7 +16,7 @@ function engine(on: any, opts: { now?: () => number; store?: Map<string, unknown
   on('clock.now', () => ({ value: opts.now ? opts.now() : 1_000_000 }))
   on('ui.status', () => ({ value: undefined }))
   on('ui.toast', () => ({ value: undefined }))
-  on('ui.notify', () => ({ value: { isSent: true, channel: 'test' } }))
+  on('ui.notify', (_: unknown, e: { text: string }) => { opts.notifies?.push(e.text); return { value: { isSent: true, channel: 'test' } } })
   on('store.get', (_: unknown, e: { key: string }) => ({ value: store.get(e.key) }))
   on('store.set', (_: unknown, e: { key: string; value: unknown }) => { store.set(e.key, e.value); return { value: undefined } })
   on('process.run', () => ({ value: { exitCode: 0, stdout: opts.tail ?? '/tmp/claude-1/p/s/tasks/abc.output\n', stderr: '' } }))
@@ -70,6 +70,62 @@ test('a background command with a percent gets a bar with a stop button; one wit
   ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
   expect((await ui.find({ type: 'Text', text: /Собрать проект/ }))?.text).toMatch(/⏳.*45%/)
   expect(await ui.find({ type: 'Button', key: 'stop-bg-abc' })).toBeDefined()
+  await ui.unmount()
+})
+
+test('a long foreground command pings once it has run past the ping floor, not before, and not again inside the interval', async ($, on) => {
+  let now = 1_000_000
+  const ticks: (() => void)[] = []
+  const notifies: string[] = []
+  engine(on, { now: () => now, ticks, notifies })
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+
+  await $.tool.call({ tool: 'mcp__progress-bar__progress', id: 'b', title: 'Сборка', pct: 10, note: 'компиляция' })
+
+  now += 2 * 60_000 // 2 min: under the 5 min floor
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  expect(notifies.length).toBe(0)
+
+  now += 4 * 60_000 // 6 min total: past the floor, first ping due
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  expect(notifies.length).toBe(1)
+  expect(notifies[0]).toMatch(/Сборка/)
+
+  now += 3 * 60_000 // 9 min total: inside the 10-min interval since the last ping, no second one
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  expect(notifies.length).toBe(1)
+})
+
+test('a background command reads percent from git\'s own progress lines, and a step fraction when there is no percent at all', async ($, on) => {
+  const ticks: (() => void)[] = []
+  engine(on, { tail: 'Receiving objects:  45% (123/456), 2.00 MiB | 1.00 MiB/s\n', ticks })
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100 } }))
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'abc' } }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'git clone x', description: 'Клонировать', run_in_background: true })
+
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /Клонировать/ }))?.text).toMatch(/⏳.*45%/)
+  await ui.unmount()
+})
+
+test('a background command with no percent reads a Step N/M fraction instead', async ($, on) => {
+  const ticks: (() => void)[] = []
+  engine(on, { tail: 'Step 3/8 : RUN npm ci\n', ticks })
+  on('fs.stat', () => ({ value: { kind: 'file', size: 100 } }))
+  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false, backgroundTaskId: 'abc' } }))
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  await $.tool.call({ tool: 'Bash', command: 'docker build .', description: 'Собрать образ', run_in_background: true })
+
+  ticks.shift()?.()
+  await new Promise(r => setTimeout(r, 20))
+  let ui = await $.ui.mount({ ...BAND, surface: 'desktop' })
+  expect((await ui.find({ type: 'Text', text: /Собрать образ/ }))?.text).toMatch(/⏳.*38%/)
   await ui.unmount()
 })
 
